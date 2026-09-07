@@ -1,7 +1,7 @@
 # EKS pod distribution drift demo
 
 Companion repository for the AWS Containers blog post
-**"Fix pod distribution drift in Amazon EKS with the Kubernetes descheduler"** (CONTAINERS-238).
+**"Fix pod distribution drift in Amazon EKS with the Kubernetes descheduler"**.
 
 Reproduces the full experiment: a three-Deployment web fleet (1,000 pods
 combined) driven by HPAs under randomized load, each Deployment carrying its
