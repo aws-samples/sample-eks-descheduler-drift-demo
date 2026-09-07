@@ -1,0 +1,342 @@
+# Grafana dashboard: the detailed version of ../05-grafana/pod-distribution-dashboard.yaml.
+#
+# Separate ConfigMap and separate uid, so the original 4-panel dashboard is left
+# untouched and both appear in Grafana side by side. If this one screenshots
+# better, fold it back into the repo file.
+#
+#   kubectl apply -f pod-distribution-dashboard-detailed.yaml
+#   Grafana -> Dashboards -> "Pod Distribution Drift (detailed)"
+#
+# What this adds over the original, and why each panel earns its place in the post:
+#   - Per-AZ SHARE (%)      the HPA changes the total constantly, so raw counts
+#                           make drift hard to read. Share is scale-invariant:
+#                           a balanced workload sits at three flat 33.3% lines.
+#   - Skew vs configured    plots observed skew against the maxSkew: 1 the spec
+#     maxSkew               actually asks for. The gap IS the story.
+#   - HPA activity          desired vs ready replicas: the churn that causes the
+#                           drift, visible as it happens.
+#   - Pending pods          the zero-downtime claim, evidenced. Must stay flat at
+#                           0 through every eviction. This is also the panel that
+#                           would light up if you used hard constraints instead.
+#   - PDB headroom          shows the descheduler being throttled by the budget
+#                           rather than just asserting that it is.
+#   - Descheduler runs      how many CronJob runs completed, counted from
+#                           kube_job_status_succeeded.
+#   - Pod replacement churn pods younger than 5 minutes, as an eviction proxy.
+#
+# NOT CHARTED, DELIBERATELY: descheduler_pods_evicted_total. In CronJob mode the
+# descheduler pod exists for a few seconds -- shorter than one scrape interval --
+# so Prometheus never samples that counter and any panel using it reads 0 forever.
+# That is worse than no panel: it looks like the descheduler did nothing. Earlier
+# revisions of this file shipped two such panels; they were removed.
+#
+# Count evictions from the Job logs instead:
+#     kubectl -n kube-system logs job/descheduler-now | grep totalEvicted
+# or from API events (reason=RemovePodsViolatingTopologySpreadConstraint).
+# scripts/snapshot.sh captures both at every phase.
+#
+# If you want real eviction metrics in Prometheus, run the descheduler as a
+# long-lived Deployment: descheduler/descheduler-values-deployment.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-distribution-dashboard-detailed
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  pod-distribution-detailed.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "title": "Pod Distribution Drift (detailed)",
+      "uid": "pod-distribution-drift-detail",
+      "tags": ["eks", "topology", "descheduler", "blog"],
+      "timezone": "",
+      "schemaVersion": 39,
+      "version": 1,
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {},
+            "hide": 0
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Pods per Availability Zone (demo/web)",
+          "description": "Raw per-AZ pod count. Three lines that fan apart under churn and converge once the descheduler runs. NOTE: a zone with zero pods drops out of the query result entirely -- there is no series to draw -- so a line that just ends means that zone is empty, not that data is missing. That is also why the skew panel understates skew when a zone empties out.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max", "mean"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "{{label_topology_kubernetes_io_zone}}",
+              "expr": "sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels)"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Current per-AZ count",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "colorMode": "value", "textMode": "value_and_name", "graphMode": "area" },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "{{label_topology_kubernetes_io_zone}}",
+              "expr": "sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels)"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Per-AZ share of replicas (%)",
+          "description": "Scale-invariant view of the same data. Perfectly balanced = three flat lines at 33.3%. Because it is normalized, HPA scaling does not move these lines -- only DRIFT does. This is usually the clearest single drift visual.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "stacking": { "mode": "normal", "group": "A" }, "showPoints": "never" },
+              "unit": "percent",
+              "min": 0,
+              "max": 100
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "{{label_topology_kubernetes_io_zone}}",
+              "expr": "100 * (sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels)) / scalar(sum(kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels))"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Observed skew vs configured maxSkew",
+          "description": "The drift signal plotted against what the spec actually asks for. The distance between the two lines is the whole problem the post describes. The query ORs in 'count by (zone) (kube_node_labels) * 0' so that a zone holding ZERO pods still contributes a 0 to min(). Without it, an emptied zone produces no series, min() only spans zones that still have pods, and skew reads 0 at the exact moment it is worst -- which is what happened for three hours in the 100-pod run.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "showPoints": "never" },
+              "unit": "short",
+              "min": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "orange", "value": 10 }, { "color": "red", "value": 50 } ] }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "configured maxSkew (1)" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "custom.fillOpacity", "value": 0 },
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }
+                ]
+              }
+            ]
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "observed skew",
+              "expr": "max(sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0) - min(sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0)"
+            },
+            {
+              "refId": "B",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "configured maxSkew (1)",
+              "expr": "vector(1)"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "HPA activity: what causes the drift",
+          "description": "Every scale-up places new pods against whatever the capacity picture looks like that minute, and every scale-down removes them unevenly. This panel is the mechanism; the skew panel is the consequence.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "HPA desired" },
+                "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 6] } } ]
+              }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "HPA desired",
+              "expr": "sum(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo\", horizontalpodautoscaler=~\"web-.*\"})"
+            },
+            {
+              "refId": "B",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "ready",
+              "expr": "sum(kube_deployment_status_replicas_ready{namespace=\"demo\", deployment=~\"web-.*\"})"
+            },
+            {
+              "refId": "C",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "load generators",
+              "expr": "kube_deployment_status_replicas_ready{namespace=\"demo\", deployment=\"load-generator\"}"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Pending pods (unschedulable)",
+          "description": "Two DIFFERENT things show up here, and the post must not conflate them. (1) CAPACITY PRESSURE: while an AZ is unavailable, the HPA can ask for more replicas than the remaining AZs can hold, and the surplus queues. That is a real shortfall -- there is no room anywhere -- not a constraint problem, and it resolves the moment capacity returns. (2) EVICTION SAFETY: during descheduler runs this must stay flat at 0, because a PDB-throttled eviction of a soft-constraint workload should never strand a pod. Claim (2) is what the post can prove; do not claim (1).",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 17 },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 30, "showPoints": "never" },
+              "unit": "short",
+              "min": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] },
+              "color": { "mode": "thresholds" }
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "Pending",
+              "expr": "sum(kube_pod_status_phase{namespace=\"demo\", phase=\"Pending\"})"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "PDB headroom (the throttle)",
+          "description": "Each web Deployment has its own PDB (maxUnavailable: 10%). 'disruptions allowed' is how many pods the descheduler may evict from that workload right now. Watch it dip toward 0 during a run and recover as replacements go Ready.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 17 },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "allowed {{poddisruptionbudget}}",
+              "expr": "kube_poddisruptionbudget_status_pod_disruptions_allowed{namespace=\"demo\"}"
+            },
+            {
+              "refId": "B",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "healthy {{poddisruptionbudget}}",
+              "expr": "kube_poddisruptionbudget_status_current_healthy{namespace=\"demo\"}"
+            },
+            {
+              "refId": "C",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "desired healthy",
+              "expr": "kube_poddisruptionbudget_status_desired_healthy{namespace=\"demo\"}"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "type": "stat",
+          "title": "Descheduler runs (last 6h)",
+          "description": "Counts completed descheduler Jobs. NOTE: this dashboard deliberately does NOT chart descheduler_pods_evicted_total. In CronJob mode the descheduler pod lives a few seconds -- less than one scrape interval -- so that counter is never collected and any panel built on it reads 0 forever, which reads as 'the descheduler did nothing'. Authoritative eviction counts come from the Job logs (kubectl -n kube-system logs job/<name> | grep totalEvicted) and from API events (reason=RemovePodsViolatingTopologySpreadConstraint); scripts/snapshot.sh captures both. For live eviction metrics, run the descheduler as a Deployment instead -- see descheduler/descheduler-values-deployment.yaml.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 7, "w": 6, "x": 0, "y": 25 },
+          "fieldConfig": { "defaults": { "unit": "short", "noValue": "0", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "textMode": "value", "graphMode": "area" },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "completed runs",
+              "expr": "count(max_over_time(kube_job_status_succeeded{namespace=\"kube-system\", job_name=~\"descheduler.*\"}[6h]) > 0)"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "Pod replacements in demo/web (churn proxy)",
+          "description": "Pods in the web fleet whose creation timestamp is under 5 minutes old. Bars rise whenever pods are replaced -- by a descheduler eviction, an HPA scale-up, or a node going away -- so read it alongside the HPA panel to tell those apart: bars with flat HPA desired means rebalancing, bars with rising HPA desired means scaling. This is a proxy, not an eviction count; use the Job logs for exact numbers.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 7, "w": 10, "x": 6, "y": 25 },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 70 }, "unit": "short", "min": 0, "noValue": "0" }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "pods created in last 5m",
+              "expr": "count(time() - kube_pod_created{namespace=\"demo\", pod=~\"web-.*\"} < 300)"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "type": "stat",
+          "title": "Nodes per AZ (all nodegroups)",
+          "description": "Capacity symmetry check. If the AZs do not have comparable node capacity, apparent 'drift' may just be where the room is -- worth ruling out before blaming the scheduler.",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 25 },
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "colorMode": "value", "textMode": "value_and_name" },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "legendFormat": "{{label_topology_kubernetes_io_zone}}",
+              "expr": "count by (label_topology_kubernetes_io_zone) (kube_node_labels)"
+            }
+          ]
+        }
+      ]
+    }

@@ -1,0 +1,210 @@
+# Three web-tier Deployments (a fleet, not a single monolith Deployment):
+#
+#   web-frontend  — weight ~50% of the fleet
+#   web-api       — weight ~30%
+#   web-orders    — weight ~20%
+#
+# Each has its own Service, PDB, and soft topology spread constraint scoped to
+# its own pods (labelSelector app: <name>) — which is how real clusters look,
+# and how the descheduler actually evaluates violations: per workload, not per
+# cluster. All pods also carry the shared label `workload: web` so scripts and
+# dashboards can aggregate the fleet.
+#
+# All three run the CPU-intensive registry.k8s.io/hpa-example image (from the
+# Kubernetes HPA walkthrough:
+# https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
+# so their HPAs have something to scale on.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-frontend
+  namespace: demo
+  labels:
+    app: web-frontend
+    workload: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-frontend
+  template:
+    metadata:
+      labels:
+        app: web-frontend
+        workload: web
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway      # soft
+          labelSelector:
+            matchLabels:
+              app: web-frontend
+          matchLabelKeys:
+            - pod-template-hash                  # spread per rollout; requires Kubernetes 1.27+
+      containers:
+        - name: web
+          image: registry.k8s.io/hpa-example
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m                          # HPA scales on this
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-frontend
+  namespace: demo
+  labels:
+    app: web-frontend
+spec:
+  selector:
+    app: web-frontend
+  ports:
+    - port: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-frontend-pdb
+  namespace: demo
+spec:
+  maxUnavailable: 10%          # concurrency limit the descheduler honors
+  selector:
+    matchLabels:
+      app: web-frontend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-api
+  namespace: demo
+  labels:
+    app: web-api
+    workload: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-api
+  template:
+    metadata:
+      labels:
+        app: web-api
+        workload: web
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: web-api
+          matchLabelKeys:
+            - pod-template-hash
+      containers:
+        - name: web
+          image: registry.k8s.io/hpa-example
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-api
+  namespace: demo
+  labels:
+    app: web-api
+spec:
+  selector:
+    app: web-api
+  ports:
+    - port: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-api-pdb
+  namespace: demo
+spec:
+  maxUnavailable: 10%
+  selector:
+    matchLabels:
+      app: web-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-orders
+  namespace: demo
+  labels:
+    app: web-orders
+    workload: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-orders
+  template:
+    metadata:
+      labels:
+        app: web-orders
+        workload: web
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: web-orders
+          matchLabelKeys:
+            - pod-template-hash
+      containers:
+        - name: web
+          image: registry.k8s.io/hpa-example
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-orders
+  namespace: demo
+  labels:
+    app: web-orders
+spec:
+  selector:
+    app: web-orders
+  ports:
+    - port: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-orders-pdb
+  namespace: demo
+spec:
+  maxUnavailable: 10%
+  selector:
+    matchLabels:
+      app: web-orders

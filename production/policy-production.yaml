@@ -1,0 +1,53 @@
+# DeschedulerPolicy — PRODUCTION scope (production rollout, step 2 of 2).
+#
+# Move here only after the pilot has run 48-72 hours with skew halved and zero
+# PDB violations. Expand namespaces incrementally (roughly one per week) rather
+# than enabling everything at once.
+#
+# Match the apiVersion to your installed descheduler version.
+apiVersion: "descheduler/v1alpha2"
+kind: "DeschedulerPolicy"
+
+# Higher than the pilot, but still bounded. Tune based on observed eviction
+# rate and re-placement latency.
+maxNoOfPodsToEvictPerNamespace: 10
+
+profiles:
+  - name: rebalance-topology-production
+    pluginConfig:
+      - name: "RemovePodsViolatingTopologySpreadConstraint"
+        args:
+          constraints:
+            - DoNotSchedule
+            - ScheduleAnyway
+          # Exclude namespaces you never want rebalanced (system, ingress,
+          # stateful data planes you manage by hand). Everything else is in
+          # scope. Prefer `exclude` here over a long `include` list.
+          namespaces:
+            exclude:
+              - "kube-system"
+              - "kube-node-lease"
+              - "kube-public"
+              - "monitoring"
+          topologyBalanceNodeFit: true
+
+      - name: "DefaultEvictor"
+        args:
+          evictSystemCriticalPods: false
+          evictLocalStoragePods: false
+          ignorePvcPods: true
+          # Protect infra-tier workloads. Confirm CoreDNS, kube-proxy, and your
+          # ingress controllers actually carry a system priority class; many do
+          # not by default, so this threshold alone may not protect them.
+          priorityThreshold:
+            value: 10000
+          nodeFit: true
+
+    plugins:
+      balance:
+        enabled:
+          - "RemovePodsViolatingTopologySpreadConstraint"
+      # NOTE: Do NOT add LowNodeUtilization here while rebalancing topology.
+      # The two plugins pull in opposite directions (spread vs consolidate)
+      # and produce oscillating evictions. Introduce it separately, later,
+      # only if you have a distinct node-utilization goal.

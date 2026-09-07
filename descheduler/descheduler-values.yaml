@@ -1,0 +1,76 @@
+# Complete Helm values for the descheduler (this file IS descheduler-values.yaml
+# referenced in the blog — there is no other file).
+#
+#   helm repo add descheduler https://kubernetes-sigs.github.io/descheduler/
+#   helm repo update
+#   helm install descheduler descheduler/descheduler \
+#     --namespace kube-system --values descheduler/descheduler-values.yaml
+#
+# CronJob mode is what enables on-demand runs:
+#   kubectl -n kube-system create job descheduler-now --from=cronjob/descheduler
+#
+# NOTE for clean measurements: the 2-minute schedule is demo-only (use */15 in
+# production). If you trigger a manual job, SUSPEND the CronJob first —
+#   kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":true}}'
+# — otherwise a scheduled run can fire seconds after your manual one, both
+# computing evictions from the same snapshot and inflating the eviction count.
+# (This is exactly what produced 404 evictions for a ~276-move correction in the
+# original run.)
+#
+# The Helm chart sets priorityClassName: system-cluster-critical (priority
+# 2,000,000,000) on the descheduler pod by default, so the pod schedules even
+# while cluster capacity is tight.
+kind: CronJob
+schedule: "*/2 * * * *"            # demo only; use */15 in production
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 3
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Metrics caveat: in CronJob mode the pod lives a few seconds per run — shorter
+# than a Prometheus scrape interval — so descheduler_pods_evicted_total is
+# effectively never collected even with the ServiceMonitor enabled. Count
+# evictions from API events or job logs; run as a Deployment for live metrics.
+service:
+  enabled: true
+serviceMonitor:
+  enabled: true
+
+deschedulerPolicy:
+  # ~20% of the 1,000-pod namespace. Start at 10–20% of your namespace's pod
+  # count; tune down for slow-starting workloads or tighter availability needs.
+  # This caps eviction VOLUME per run. The PDB caps CONCURRENT disruption.
+  # They answer different questions; the descheduler honors both.
+  maxNoOfPodsToEvictPerNamespace: 200
+  profiles:
+    - name: rebalance-topology
+      pluginConfig:
+        - name: RemovePodsViolatingTopologySpreadConstraint
+          args:
+            constraints:
+              - DoNotSchedule
+              - ScheduleAnyway        # the soft-constraint enabler
+            namespaces:
+              include:
+                - demo                # scope to the demo workload only
+            # Do not evict when no better placement exists (e.g., the target
+            # zone is still unschedulable during an active unavailability window).
+            topologyBalanceNodeFit: true
+        - name: DefaultEvictor
+          args:
+            evictSystemCriticalPods: false   # requires workloads to actually carry a system priority class
+            evictLocalStoragePods: false     # silently skips emptyDir pods — know this
+            ignorePvcPods: true
+            nodeFit: true
+            priorityThreshold:
+              value: 10000                   # protects Karpenter/CoreDNS/CNI-class pods
+      plugins:
+        balance:
+          enabled:
+            - RemovePodsViolatingTopologySpreadConstraint

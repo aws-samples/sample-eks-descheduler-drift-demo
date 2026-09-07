@@ -1,0 +1,82 @@
+# Prometheus alerting rules for a production descheduler rollout.
+#
+# IMPORTANT — these alerts require the descheduler to run in DEPLOYMENT mode.
+# In CronJob mode (what the demo uses) the descheduler pod lives a few seconds
+# per run, shorter than a Prometheus scrape interval, so
+# descheduler_pods_evicted_total is effectively never collected even with the
+# ServiceMonitor enabled. The skew alert (recording-rule based) works in both
+# modes; the eviction-rate alerts only work in Deployment mode.
+#
+# Tune the thresholds (especially steady-state eviction rate) after a week of
+# baseline observation.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: descheduler-alerts
+  namespace: monitoring
+  labels:
+    role: alerting
+spec:
+  groups:
+    - name: descheduler.alerting
+      rules:
+        # Mass eviction: far above steady state. REPLACE the 0.05 placeholder
+        # with 3x your observed steady-state hourly rate before relying on it.
+        - alert: DeschedulerEvictionSpike
+          expr: rate(descheduler_pods_evicted_total[1h]) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Descheduler eviction rate spike"
+            description: >
+              Descheduler eviction rate is well above steady state. Check for a
+              node unavailability window, a misconfigured policy, or a workload
+              flapping in and out of balance.
+
+        # Re-placement failing: pods evicted but not returning to Running.
+        # Often tight capacity or an unsatisfiable constraint.
+        - alert: DeschedulerEvictionsNotRescheduling
+          expr: |
+            increase(descheduler_pods_evicted_total[15m]) > 0
+            and
+            increase(kube_pod_status_phase{phase="Running"}[15m]) <= 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Evicted pods are not returning to Running"
+            description: >
+              The descheduler evicted pods but Running pod count did not
+              recover. Check for Pending pods and per-AZ capacity.
+
+        # Drift not converging: skew stays high well after rollout.
+        # Works in CronJob mode too (based on the recording rule, not
+        # descheduler metrics).
+        - alert: PodDistributionSkewPersistent
+          expr: pod:zone_skew:max_minus_min > 4
+          for: 24h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Persistent per-AZ pod skew on {{ $labels.created_by_name }}"
+            description: >
+              Observed per-AZ skew has exceeded 4 for over 24h. The descheduler
+              is not converging this workload. Check capacity in the
+              under-packed AZ, PDB tightness, or whether the workload should
+              move to hard constraints.
+
+        # Hard-constraint decision signal (from the blog's comparison section):
+        # if Pending pods accumulate under DoNotSchedule during capacity dips,
+        # soft constraints + descheduler is the safer trade.
+        - alert: WorkloadPendingPodsAccumulating
+          expr: sum by (namespace) (kube_pod_status_phase{phase="Pending"}) > 10
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pending pods accumulating in {{ $labels.namespace }}"
+            description: >
+              Pending pods are accumulating. If this workload uses
+              DoNotSchedule topology constraints, a zone is likely short of
+              capacity and placements are being refused.

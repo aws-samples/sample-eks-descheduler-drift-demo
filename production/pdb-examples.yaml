@@ -1,0 +1,82 @@
+# PodDisruptionBudget templates for a production descheduler rollout.
+# Apply a PDB to EVERY workload in scope BEFORE enabling the descheduler —
+# PDBs are the concurrency throttle that makes evictions safe, and the
+# descheduler will never take a workload below its budget.
+#
+# Guidance:
+#   - High-replica Deployments: prefer maxUnavailable as a percentage so the
+#     budget scales with replica count.
+#   - Low-replica Deployments (3 or fewer): maxUnavailable: 1 moves one pod per
+#     run. Correct, but slow. Consider a minimum-replica threshold when scoping
+#     which workloads the descheduler manages.
+#
+#   - PERCENTAGE BUDGETS DO NOT PROTECT SMALL DEPLOYMENTS. Kubernetes rounds a
+#     maxUnavailable percentage UP, so `maxUnavailable: 10%` on a 2-replica
+#     Deployment reports "Allowed disruptions: 1" — it permits 50% of the
+#     workload to go down, not 10%. Measured, not theoretical: in the 100-pod
+#     run, once the HPAs scaled to minReplicas: 2, the descheduler evicted 1 of
+#     web-api's 2 pods and the PDB allowed it. Below roughly 10 replicas, use an
+#     absolute `maxUnavailable: 1` or `minAvailable: <N>` instead of a
+#     percentage, or scope the descheduler to skip such workloads.
+#
+#   - SKEW HAS AN ARITHMETIC FLOOR AT LOW REPLICA COUNTS. With 2 replicas across
+#     3 zones, one zone is necessarily empty and skew 1 is the best achievable
+#     state — the descheduler correctly reports "already balanced" at skew 1 and
+#     will still act on skew 2 (both pods in one zone). That eviction moves skew
+#     from 2 to 1 and cannot do better, so the cost is 50% of the workload for a
+#     result that never reaches maxSkew's intent. This is the concrete reason to
+#     gate descheduling on replica count or time of day rather than running it
+#     continuously against an HPA'd fleet at its minimum.
+#   - StatefulSets: be more conservative — fewer replicas, stricter availability.
+#     Rebalance them after Deployments, if at all. (Better: exclude
+#     eviction-sensitive StatefulSets entirely; see the blog's
+#     "Should you use the descheduler?" section.)
+
+# --- Deployment, percentage budget -------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkout-api-pdb
+  namespace: pilot-tolerant-app
+spec:
+  # 10% of a 30-replica Deployment = up to 3 pods per pass, 27 serving.
+  maxUnavailable: 10%
+  selector:
+    matchLabels:
+      app: checkout-api
+---
+# --- Deployment, absolute floor ----------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: payments-api-pdb
+  namespace: pilot-tolerant-app
+spec:
+  minAvailable: 80%
+  selector:
+    matchLabels:
+      app: payments-api
+---
+# --- Quorum-based StatefulSet: never more than one down ----------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-pdb
+  namespace: pilot-tolerant-app
+spec:
+  maxUnavailable: 1          # 3-replica set keeps a quorum of 2 at all times
+  selector:
+    matchLabels:
+      app: kafka
+---
+# --- Explicit serving majority ------------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: zookeeper-pdb
+  namespace: pilot-tolerant-app
+spec:
+  minAvailable: 2            # at least 2 of 3 so the ensemble retains quorum
+  selector:
+    matchLabels:
+      app: zookeeper

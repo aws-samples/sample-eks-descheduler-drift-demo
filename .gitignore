@@ -1,0 +1,14 @@
+# Run artifacts — never commit captures or logs.
+# The measured evidence (screenshots, tables) is published in the blog post
+# itself; run-*/ holds the local session data behind it.
+captures/
+run-*/
+*.log
+
+# Credentials — never commit
+creds*.sh
+*.pem
+.env
+
+# OS noise
+.DS_Store

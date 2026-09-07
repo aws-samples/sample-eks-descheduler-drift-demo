@@ -1,0 +1,81 @@
+# Load generator: busybox pods sending HTTP GET requests (wget) to the three
+# web Services, in RANDOMIZED bursts against a RANDOMLY CHOSEN service each
+# burst. Randomization is not cosmetic: fixed-rate load settles every HPA at
+# one replica count and holds it there, and a workload that never scales never
+# drifts. Random bursts against random targets keep all three HPAs chasing
+# moving targets, the way production traffic does.
+#
+# SCALE THE GENERATOR TO THE FLEET. The default 20 replicas is sized for the
+# 1,000-pod run. On the 100-pod run it saturates every HPA permanently — CPU
+# never falls back under the 50% target, all three HPAs sit at maxReplicas, and
+# the Phase 3 churn baseline shows a flat line instead of scale up/down cycles.
+# For the 100-pod run, scale to ~4 first:
+#     kubectl -n demo scale deploy/load-generator --replicas=4
+# Being pinned at max is desirable LATER (stable screenshots during the
+# unavailability window, and the control experiment, which needs no new pods) —
+# just not during the churn baseline.
+#
+#   Increase load:  kubectl -n demo scale deploy/load-generator --replicas=45
+#   Pin load steady (for screenshots):
+#     kubectl -n demo set env deploy/load-generator \
+#       WORKERS_MIN=10 WORKERS_MAX=10 BURST_MIN=900 BURST_MAX=900 IDLE_MIN=0 IDLE_MAX=0
+#   Stop load:      kubectl -n demo scale deploy/load-generator --replicas=0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: demo
+  labels:
+    app: load-generator
+spec:
+  replicas: 20
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: load
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              SVCS="http://web-frontend http://web-api http://web-orders"
+              rnd() {
+                S=$(od -An -N4 -tu4 < /dev/urandom | tr -d ' ')
+                awk -v lo="$1" -v hi="$2" -v s="$S" \
+                  'BEGIN{srand(s); print lo+int(rand()*(hi-lo+1))}'
+              }
+              pick_svc() {
+                N=$(rnd 1 3)
+                echo "$SVCS" | cut -d' ' -f"$N"
+              }
+              : "${WORKERS_MIN:=2}"  "${WORKERS_MAX:=10}"
+              : "${BURST_MIN:=60}"   "${BURST_MAX:=180}"
+              : "${IDLE_MIN:=20}"    "${IDLE_MAX:=90}"
+              while true; do
+                SVC=$(pick_svc)                          # random target this burst
+                W=$(rnd "$WORKERS_MIN" "$WORKERS_MAX")   # concurrent request loops
+                D=$(rnd "$BURST_MIN" "$BURST_MAX")       # burst duration, seconds
+                NOW=$(date +%s); END=$((NOW + D))
+                i=0
+                while [ "$i" -lt "$W" ]; do
+                  ( while [ "$(date +%s)" -lt "$END" ]; do
+                      wget -q -O- "$SVC" >/dev/null 2>&1 || sleep 1
+                    done ) &
+                  i=$((i+1))
+                done
+                wait
+                sleep "$(rnd "$IDLE_MIN" "$IDLE_MAX")"   # idle gap -> HPAs scale down
+              done
+          resources:
+            requests:
+              cpu: 25m
+              memory: 16Mi
+            limits:
+              cpu: 300m
+              memory: 64Mi

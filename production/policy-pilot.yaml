@@ -1,0 +1,53 @@
+# DeschedulerPolicy — PILOT scope (production rollout, step 1 of 2).
+#
+# The demo policy in descheduler/descheduler-values.yaml is tuned to make
+# convergence visible in minutes. This one is what you actually start with in
+# production: one or two tolerant namespaces, a tight eviction budget, a tight
+# priority threshold. Prove it is safe before expanding.
+#
+# Match the apiVersion to your installed descheduler version. v1alpha2 is the
+# profile-based policy used by recent releases (v0.25.0+). Older versions used
+# v1alpha1 and the `includeSoftConstraints: true` flag; the v1alpha1 -> v1alpha2
+# change is breaking.
+apiVersion: "descheduler/v1alpha2"
+kind: "DeschedulerPolicy"
+
+# Coarse global throttle. PDBs are the fine-grained one.
+maxNoOfPodsToEvictPerNamespace: 5
+
+profiles:
+  - name: rebalance-topology-pilot
+    pluginConfig:
+      - name: "RemovePodsViolatingTopologySpreadConstraint"
+        args:
+          # Act on BOTH hard and soft constraints. The default is hard only,
+          # which would ignore the soft-constraint drift this rollout targets.
+          constraints:
+            - DoNotSchedule
+            - ScheduleAnyway
+          # Restrict the pilot to tolerant namespaces. Replace these.
+          namespaces:
+            include:
+              - "pilot-tolerant-app"
+          # Only evict if the pod can actually be re-placed elsewhere.
+          topologyBalanceNodeFit: true
+
+      - name: "DefaultEvictor"
+        args:
+          evictSystemCriticalPods: false
+          # emptyDir-backed pods are skipped by default. Flip to true only if
+          # your pilot workloads use emptyDir for disposable scratch space.
+          evictLocalStoragePods: false
+          # Skip PVC-backed pods during the pilot.
+          ignorePvcPods: true
+          # Tight threshold during pilot: only low-priority app pods are
+          # eligible. Raise deliberately as you expand.
+          priorityThreshold:
+            value: 1000
+          # Honor PDBs and only evict pods that will fit elsewhere.
+          nodeFit: true
+
+    plugins:
+      balance:
+        enabled:
+          - "RemovePodsViolatingTopologySpreadConstraint"

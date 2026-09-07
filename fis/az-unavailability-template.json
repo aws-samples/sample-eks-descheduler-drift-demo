@@ -1,0 +1,43 @@
+{
+  "description": "Pod distribution drift demo: stop all demo node group instances in one AZ for a fixed window, then restart. Reproduces a node unavailability window with experiment controls. Targets the eks:nodegroup-name tag that EKS applies to managed node group instances automatically.",
+  "targets": {
+    "instances-in-target-az": {
+      "resourceType": "aws:ec2:instance",
+      "resourceTags": {
+        "eks:nodegroup-name": "ng-drift-1000"
+      },
+      "filters": [
+        {
+          "path": "Placement.AvailabilityZone",
+          "values": ["us-east-1c"]
+        },
+        {
+          "path": "State.Name",
+          "values": ["running"]
+        }
+      ],
+      "selectionMode": "ALL"
+    }
+  },
+  "actions": {
+    "stop-az-instances": {
+      "actionId": "aws:ec2:stop-instances",
+      "description": "Stop instances in the target AZ for the window, then restart them",
+      "parameters": {
+        "startInstancesAfterDuration": "PT20M"
+      },
+      "targets": {
+        "Instances": "instances-in-target-az"
+      }
+    }
+  },
+  "stopConditions": [
+    {
+      "source": "none"
+    }
+  ],
+  "roleArn": "arn:aws:iam::<ACCOUNT_ID>:role/<FIS_EXPERIMENT_ROLE>",
+  "tags": {
+    "project": "pod-distribution-drift-demo"
+  }
+}

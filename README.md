@@ -1,93 +1,177 @@
-# eks-descheduler-drift-demo
+# EKS pod distribution drift demo
 
+Companion repository for the AWS Containers blog post
+**"Fix pod distribution drift in Amazon EKS with the Kubernetes descheduler"** (CONTAINERS-238).
 
+Reproduces the full experiment: a three-Deployment web fleet (1,000 pods
+combined) driven by HPAs under randomized load, each Deployment carrying its
+own soft topology spread constraint; a node-availability gap in one AZ
+(induced by cordon — `scripts/induce-window.sh` — with an AWS FIS template as
+the realistic-interruption variant; see `fis/README-fis.md` for why cordon is
+the more controllable instrument against a managed node group); a control
+experiment proving running pods do not relocate when capacity returns; and the
+descheduler restoring each workload's configured `maxSkew`.
 
-## Getting started
+The experiment runs at two scales with the same manifests:
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+| | Full-scale | Small-scale |
+|---|---|---|
+| Fleet | 1,000 pods (500/300/200) | 100 pods (50/30/20) |
+| Nodes | 21 × m5.2xlarge (7/AZ), node group `ng-drift-1000` | 3 × m5.2xlarge (1/AZ), node group `ng-drift-100` |
+| HPAs | `workload/hpa-1000.yaml` | `workload/hpa-100.yaml` |
+| Everything else | identical | identical |
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+> **Cost warning:** the full-scale run's 21 m5.2xlarge nodes are the dominant
+> cost. Estimate with the [AWS Pricing Calculator](https://calculator.aws/),
+> run in one sitting, and remove the nodegroup promptly. The small-scale run
+> reproduces the same behavior at a fraction of the cost.
 
-## Add your files
+## Prerequisites
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+- **An existing Amazon EKS cluster** — Kubernetes 1.36 or later, spanning three
+  Availability Zones, created with any tool (console, Terraform, CDK, eksctl).
+  This repo does not create clusters; if you need one, follow
+  [Creating an Amazon EKS cluster](https://docs.aws.amazon.com/eks/latest/userguide/create-cluster.html).
+
+  The repo's defaults name `us-east-1a/b/c`, but **your cluster's subnets may
+  be in different AZs** (1b/1d/1f is common) — check before you start:
+
+  ```bash
+  aws ec2 describe-subnets \
+    --subnet-ids $(aws eks describe-cluster --name "$CLUSTER" \
+      --query 'cluster.resourcesVpcConfig.subnetIds' --output text) \
+    --query 'Subnets[].[SubnetId,AvailabilityZone]' --output table
+  ```
+
+  If they differ, override the AZ names in two places: export `AZ_A`/`AZ_B`/`AZ_C`
+  in the shell that runs `scripts/watch-distribution.sh` (otherwise it logs zeros
+  for every zone), and edit the `Placement.AvailabilityZone` filter in the FIS
+  template. `scripts/induce-window.sh` takes the AZ as an argument, so it needs
+  no change.
+- `kubectl`, `helm`, and the AWS CLI.
+- **`metrics-server` running and serving metrics** — the three HPAs read CPU from
+  it, and without it they report `<unknown>/50%` and never scale, which stalls the
+  walkthrough before any drift can occur. Install it as an EKS add-on and verify
+  before you start:
+
+  ```bash
+  kubectl -n kube-system get deploy metrics-server
+  kubectl top nodes          # must return numbers, not an error
+  ```
+
+- For the FIS path: an IAM role FIS can assume (see `fis/README-fis.md`).
+
+## Repository layout
 
 ```
-cd existing_repo
-git remote add origin https://code.aws.dev/personal_projects/alias_i/iamramya/eks-descheduler-drift-demo.git
-git branch -M main
-git push -uf origin main
+cluster/        node group requirements + AWS CLI commands (tool-agnostic)
+monitoring/     kube-prometheus-stack values, Grafana dashboard, recording rules, alerts
+workload/       namespace, 3-Deployment web fleet (Services + PDBs), HPAs, load generator
+descheduler/    Helm values: CronJob mode for the demo (fast convergence, scoped
+                to `demo` ns) and a Deployment-mode variant for live metrics
+production/     pilot + production DeschedulerPolicy files and PDB templates
+fis/            AWS FIS experiment templates for the AZ unavailability window
+scripts/        induce-window.sh (cordon window), watch-distribution.sh
+                (30s per-AZ + per-deployment skew CSV), snapshot.sh (phase
+                captures), export-prom.sh (chart data as CSV), mark.sh
+                (timestamped run timeline)
 ```
 
-## Integrate with your tools
+**Demo vs production:** `descheduler/descheduler-values.yaml` is tuned so
+convergence is watchable in minutes (2-minute schedule, 200-eviction budget).
+For a real rollout, start from `production/policy-pilot.yaml` (one tolerant
+namespace, tight budgets), graduate to `production/policy-production.yaml`
+after 48–72 clean hours, and put a PDB on every in-scope workload first
+(`production/pdb-examples.yaml`). `monitoring/prometheus-alerts.yaml` carries
+the alert set — note the CronJob-mode metrics caveat in its header.
 
-* [Set up project integrations](https://code.aws.dev/personal_projects/alias_i/iamramya/eks-descheduler-drift-demo/-/settings/integrations)
+## Applying manifests directly from the repository
 
-## Collaborate with your team
+Set the raw base once; every kubectl/helm step applies straight from this repo:
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```bash
+# GitHub:
+export RAW=https://raw.githubusercontent.com/<ORG>/<REPO>/main
+# GitLab:
+export RAW=https://gitlab.com/<GROUP>/<REPO>/-/raw/main
+```
 
-## Test and Deploy
+> The repository must be **public** (or the URLs otherwise reachable without
+> authentication) for direct `kubectl apply -f "$RAW/..."` to work — kubectl
+> does not send credentials when fetching manifests over HTTPS. For a private
+> repo, clone it and apply from the local paths instead.
 
-Use the built-in continuous integration in GitLab.
+## Quick start
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+```bash
+# 1. Capacity on your existing cluster — enable prefix delegation FIRST, then
+#    create the node group with your tool of choice (AWS CLI commands, subnet
+#    and node-role lookups, and verification gates: cluster/README.md)
+kubectl set env daemonset aws-node -n kube-system \
+  ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
+aws eks create-nodegroup --cluster-name <cluster> --nodegroup-name ng-drift-1000 \
+  --scaling-config minSize=21,maxSize=24,desiredSize=21 \
+  --instance-types m5.2xlarge --disk-size 30 \
+  --subnets <subnet-1a> <subnet-1b> <subnet-1c> \
+  --node-role <NODE_ROLE_ARN> --labels role=drift-demo
 
-***
+# 2. Monitoring
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace \
+  --values "$RAW/monitoring/kube-prometheus-stack-values.yaml"
+kubectl apply -f "$RAW/monitoring/pod-distribution-dashboard.yaml"
+kubectl apply -f "$RAW/monitoring/recording-rule-per-az.yaml"
 
-# Editing this README
+# 3. Workload fleet
+kubectl apply -f "$RAW/workload/namespace.yaml"
+kubectl apply -f "$RAW/workload/web-app.yaml"
+kubectl apply -f "$RAW/workload/hpa-1000.yaml"             # or hpa-100.yaml
+kubectl apply -f "$RAW/workload/load-generator.yaml"
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+# 4. Descheduler — suspend the CronJob before any manual run, or a scheduled
+#    run can fire seconds later and double-count the correction
+helm repo add descheduler https://kubernetes-sigs.github.io/descheduler/
+helm repo update
+helm install descheduler descheduler/descheduler \
+  --namespace kube-system \
+  --values "$RAW/descheduler/descheduler-values.yaml"
+kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":true}}'
+kubectl -n kube-system create job descheduler-now --from=cronjob/descheduler
+kubectl -n kube-system logs -f job/descheduler-now
+```
 
-## Suggestions for a good README
+The full experiment sequence — the unavailability window, the control
+experiment, convergence, and what to capture at each phase — is in the blog
+post. To induce and close the window:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+./scripts/induce-window.sh open us-east-1c     # use YOUR third AZ name
+./scripts/induce-window.sh close us-east-1c
+```
 
-## Name
-Choose a self-explaining name for your project.
+## Cleanup
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```bash
+kubectl delete namespace demo
+helm uninstall descheduler -n kube-system
+helm uninstall monitoring -n monitoring
+aws eks delete-nodegroup --cluster-name <cluster> --nodegroup-name ng-drift-1000
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Your cluster is untouched beyond the removed node group (prefix delegation on
+the VPC CNI remains enabled; disable it if your cluster did not use it before).
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Security notes
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+- Grafana ships with a placeholder admin password in the values file. Change it,
+  and reach Grafana via `kubectl port-forward` only — do not expose it with a
+  LoadBalancer without authentication in front.
+- The FIS template requires an IAM role; see `fis/README-fis.md`.
+- Never commit credentials. `captures/` and local credential files are
+  git-ignored.
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT-0 (see LICENSE). Sample code; not intended for production use as-is.

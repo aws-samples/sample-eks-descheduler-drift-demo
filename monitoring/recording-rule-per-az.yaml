@@ -1,0 +1,34 @@
+# Prometheus recording rules: per-AZ pod count and observed skew per workload.
+#
+# This is the core "drift" signal. A balanced workload shows three flat,
+# overlapping series (one per AZ). A drifted workload shows them fan apart and
+# stay apart. Requires kube-state-metrics with the node topology label
+# allowlist (see kube-prometheus-stack-values.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: descheduler-per-az-pod-count
+  namespace: monitoring
+  labels:
+    role: recording
+spec:
+  groups:
+    - name: pod-distribution.recording
+      interval: 30s
+      rules:
+        # Per-AZ pod count, joined pod -> node -> zone label.
+        - record: pod:count_by_zone:sum
+          expr: |
+            sum by (namespace, created_by_name, label_topology_kubernetes_io_zone) (
+              kube_pod_info{created_by_kind="ReplicaSet"}
+              * on (node) group_left(label_topology_kubernetes_io_zone)
+              kube_node_labels
+            )
+
+        # Observed skew per workload: max zone count minus min zone count.
+        # Compare against the workload's configured maxSkew.
+        - record: pod:zone_skew:max_minus_min
+          expr: |
+            max by (namespace, created_by_name) (pod:count_by_zone:sum)
+            -
+            min by (namespace, created_by_name) (pod:count_by_zone:sum)

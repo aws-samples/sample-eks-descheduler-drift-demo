@@ -1,0 +1,68 @@
+# ALTERNATIVE to descheduler-values.yaml: run the descheduler as a long-lived
+# Deployment instead of a CronJob.
+#
+# Use this when you want descheduler_pods_evicted_total in Prometheus. In CronJob
+# mode the pod lives a few seconds per run — shorter than a scrape interval — so
+# that counter is never collected and eviction panels read 0 forever. A Deployment
+# stays up, gets scraped, and the counter accumulates normally.
+#
+#   helm install descheduler descheduler/descheduler \
+#     --namespace kube-system --values descheduler/descheduler-values-deployment.yaml
+#
+# TRADE-OFF: you lose on-demand runs. There is no CronJob to trigger from, so
+#   kubectl -n kube-system create job descheduler-now --from=cronjob/descheduler
+# does not apply, and you cannot suspend it to get a clean eviction count for one
+# specific pass. The descheduler simply runs every deschedulingInterval.
+#
+# The blog's experiment uses CronJob mode precisely because it needs on-demand,
+# individually-measured passes. Prefer this file for a real deployment where you
+# care about ongoing metrics rather than one controlled measurement.
+kind: Deployment
+
+# How often the descheduler evaluates the cluster. 5m is reasonable for a demo;
+# use 15m or longer in production — every run is a chance to evict.
+deschedulingInterval: 5m
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Now worth enabling: the pod is long-lived, so these actually produce data.
+service:
+  enabled: true
+serviceMonitor:
+  enabled: true
+
+# Identical policy to descheduler-values.yaml — only the run mode differs.
+deschedulerPolicy:
+  maxNoOfPodsToEvictPerNamespace: 200
+  profiles:
+    - name: rebalance-topology
+      pluginConfig:
+        - name: RemovePodsViolatingTopologySpreadConstraint
+          args:
+            constraints:
+              - DoNotSchedule
+              - ScheduleAnyway
+            namespaces:
+              include:
+                - demo
+            topologyBalanceNodeFit: true
+        - name: DefaultEvictor
+          args:
+            evictSystemCriticalPods: false
+            evictLocalStoragePods: false
+            ignorePvcPods: true
+            nodeFit: true
+            priorityThreshold:
+              value: 10000
+      plugins:
+        balance:
+          enabled:
+            - RemovePodsViolatingTopologySpreadConstraint

@@ -1,0 +1,54 @@
+# Helm values for kube-prometheus-stack (Prometheus + Grafana + kube-state-metrics).
+#   helm install monitoring prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     --values monitoring/kube-prometheus-stack-values.yaml
+
+# ---- kube-state-metrics ------------------------------------------------------
+# CRITICAL for this demo: expose node topology labels on kube_node_labels so we
+# can join pods to their AZ. Without this allowlist,
+# label_topology_kubernetes_io_zone is not emitted and per-AZ queries return
+# nothing.
+kube-state-metrics:
+  metricLabelsAllowlist:
+    - nodes=[topology.kubernetes.io/zone,topology.kubernetes.io/region]
+
+# ---- Prometheus --------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    # 6h covers a full demo session including the churn baseline.
+    retention: 6h
+    # Scrape ServiceMonitors/rules in all namespaces (descheduler's monitor,
+    # the per-AZ recording rules).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 250m
+        memory: 2Gi
+      limits:
+        # LESSON LEARNED: every pod the HPA creates/destroys is a new time
+        # series. A thousand-pod, multi-hour churn demo OOM-killed a Prometheus
+        # limited to 2Gi (exit code 137) and lost all dashboard history.
+        # 10Gi gives headroom for the full run.
+        memory: 10Gi
+    # NOTE: emptyDir on purpose (no storageSpec). Clusters without the EBS CSI
+    # driver cannot bind a PVC, and the demo shouldn't depend on it. Fine for a
+    # short-lived demo; for anything real, install aws-ebs-csi-driver and add a
+    # gp3 storageSpec.
+
+# ---- Grafana -----------------------------------------------------------------
+grafana:
+  # CHANGE THIS before installing. Reach Grafana via kubectl port-forward only;
+  # do not switch the Service to LoadBalancer without auth in front of it.
+  adminPassword: "ChangeMe-blog-demo"
+  service:
+    type: ClusterIP
+  # Auto-load any ConfigMap labeled grafana_dashboard=1 (our dashboard).
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+  defaultDashboardsEnabled: true

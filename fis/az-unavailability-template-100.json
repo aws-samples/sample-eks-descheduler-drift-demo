@@ -1,0 +1,43 @@
+{
+  "description": "Pod distribution drift demo (SMALL-SCALE run): stop all ng-drift-100 instances in us-east-1f for 20 minutes, then restart. Targets the eks:nodegroup-name tag that EKS applies to managed node group instances automatically.",
+  "targets": {
+    "instances-in-target-az": {
+      "resourceType": "aws:ec2:instance",
+      "resourceTags": {
+        "eks:nodegroup-name": "ng-drift-100"
+      },
+      "filters": [
+        {
+          "path": "Placement.AvailabilityZone",
+          "values": ["us-east-1f"]
+        },
+        {
+          "path": "State.Name",
+          "values": ["running"]
+        }
+      ],
+      "selectionMode": "ALL"
+    }
+  },
+  "actions": {
+    "stop-az-instances": {
+      "actionId": "aws:ec2:stop-instances",
+      "description": "Stop instances in the target AZ for the window, then restart them",
+      "parameters": {
+        "startInstancesAfterDuration": "PT20M"
+      },
+      "targets": {
+        "Instances": "instances-in-target-az"
+      }
+    }
+  },
+  "stopConditions": [
+    {
+      "source": "none"
+    }
+  ],
+  "roleArn": "arn:aws:iam::<ACCOUNT_ID>:role/<FIS_EXPERIMENT_ROLE>",
+  "tags": {
+    "project": "pod-distribution-drift-demo"
+  }
+}
