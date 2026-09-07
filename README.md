@@ -34,7 +34,7 @@ The experiment runs at two scales with the same manifests:
   [Creating an Amazon EKS cluster](https://docs.aws.amazon.com/eks/latest/userguide/create-cluster.html).
 
   The repo's defaults name `us-east-1a/b/c`, but **your cluster's subnets may
-  be in different AZs** (1b/1d/1f is common) — check before you start:
+  be in different AZs** — check before you start:
 
   ```bash
   aws ec2 describe-subnets \
@@ -93,12 +93,10 @@ Set the raw base once; every kubectl/helm step applies straight from this repo:
 # GitHub:
 export RAW=https://raw.githubusercontent.com/<ORG>/<REPO>/main
 # GitLab:
-export RAW=https://gitlab.com/<GROUP>/<REPO>/-/raw/main
+https://code.aws.dev/personal_projects/alias_i/iamramya/eks-descheduler-drift-demo
 ```
 
-> The repository must be **public** (or the URLs otherwise reachable without
-> authentication) for direct `kubectl apply -f "$RAW/..."` to work — kubectl
-> does not send credentials when fetching manifests over HTTPS. For a private
+For a private
 > repo, clone it and apply from the local paths instead.
 
 ## Quick start
