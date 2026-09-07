@@ -33,6 +33,11 @@ spec:
         app: web-frontend
         workload: web
     spec:
+      # No Kubernetes API access needed; don't mount a service account token.
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -47,6 +52,30 @@ spec:
           image: registry.k8s.io/hpa-example
           ports:
             - containerPort: 80
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - NET_RAW
+            # runAsNonRoot / readOnlyRootFilesystem are deliberately NOT set:
+            # the upstream hpa-example image (from the Kubernetes HPA
+            # walkthrough) runs Apache, which binds :80 as root and writes its
+            # pidfile to the root filesystem. Either setting breaks the pod.
+            # Acceptable for a short-lived demo workload in its own namespace;
+            # use a non-root image for anything production-facing.
+          # TCP probes, not HTTP: a GET / on this image executes the CPU-burning
+          # PHP handler, so HTTP probes would add constant load to every pod and
+          # distort the HPA measurements the demo exists to take.
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests:
               cpu: 100m                          # HPA scales on this
@@ -98,6 +127,11 @@ spec:
         app: web-api
         workload: web
     spec:
+      # No Kubernetes API access needed; don't mount a service account token.
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -112,6 +146,24 @@ spec:
           image: registry.k8s.io/hpa-example
           ports:
             - containerPort: 80
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - NET_RAW
+            # runAsNonRoot / readOnlyRootFilesystem deliberately NOT set — see
+            # the note on web-frontend above; same image, same constraint.
+          # TCP probes, not HTTP — see the note on web-frontend above.
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests:
               cpu: 100m
@@ -163,6 +215,11 @@ spec:
         app: web-orders
         workload: web
     spec:
+      # No Kubernetes API access needed; don't mount a service account token.
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -177,6 +234,24 @@ spec:
           image: registry.k8s.io/hpa-example
           ports:
             - containerPort: 80
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - NET_RAW
+            # runAsNonRoot / readOnlyRootFilesystem deliberately NOT set — see
+            # the note on web-frontend above; same image, same constraint.
+          # TCP probes, not HTTP — see the note on web-frontend above.
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests:
               cpu: 100m
