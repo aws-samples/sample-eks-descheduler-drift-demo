@@ -54,9 +54,16 @@ spec:
             capabilities:
               drop:
                 - ALL
-          # Liveness only: the generator serves no traffic, so readiness has no
-          # meaning for it; if the shell loop dies the container exits anyway.
+          # This pod sits behind no Service and serves no traffic, so readiness
+          # has no real meaning here — both probes simply confirm the container's
+          # shell is alive. They are exec probes rather than HTTP for the same
+          # reason the web pods use TCP probes: nothing here should generate
+          # extra requests that would distort the HPA measurements.
           livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "true"]
+            periodSeconds: 30
+          readinessProbe:
             exec:
               command: ["/bin/sh", "-c", "true"]
             periodSeconds: 30
