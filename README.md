@@ -169,8 +169,42 @@ the VPC CNI remains enabled; disable it if your cluster did not use it before).
   and reach Grafana via `kubectl port-forward` only — do not expose it with a
   LoadBalancer without authentication in front.
 - The FIS template requires an IAM role; see `fis/README-fis.md`.
-- Never commit credentials. `captures/` and local credential files are
+- Never commit credentials. `captures/`, `run-*/`, and local credential files are
   git-ignored.
+
+### Workload hardening, and what is deliberately not hardened
+
+The demo workloads set, on every pod:
+
+- `allowPrivilegeEscalation: false`
+- `seccompProfile: RuntimeDefault`
+- `automountServiceAccountToken: false` (nothing here talks to the Kubernetes API)
+- dropped capabilities — `NET_RAW` on the web pods, `ALL` on the load generator
+- readiness and liveness probes — **TCP** on the web pods and **exec** on the
+  load generator, deliberately not HTTP: a `GET /` against the `hpa-example`
+  image executes its CPU-burning handler, so HTTP probes would add continuous
+  load to every pod and distort the very HPA measurements this demo exists to
+  take
+- the load generator additionally runs as `nobody` (UID 65534) with
+  `readOnlyRootFilesystem: true`
+
+**Three findings are accepted rather than fixed.** Static analysis (KICS and
+similar) flags the web containers for *Container Running As Root*, *Container
+Running With Low UID*, and *Root Container Not Mounted Read-only*. These come
+from the upstream
+[`registry.k8s.io/hpa-example`](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
+image, which runs Apache: it binds port 80 as root and writes its pidfile to the
+root filesystem. Setting `runAsNonRoot` or `readOnlyRootFilesystem` prevents the
+pod from starting. The image is used because it is the reference workload from
+the Kubernetes HPA walkthrough and gives the autoscalers something real to scale
+on. This is sample code for a short-lived demo in a dedicated namespace — do not
+carry these containers into production; use a non-root image instead.
+
+Informational findings around image digest pinning, `imagePullPolicy: Always`,
+LimitRange/ResourceQuota, AppArmor profiles, and pod anti-affinity are likewise
+out of scope: they are cluster-level production controls, and digest pinning in
+particular would make these manifests considerably harder to read for something
+whose purpose is to be read.
 
 ## License
 
