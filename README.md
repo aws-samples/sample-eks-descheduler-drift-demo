@@ -92,8 +92,6 @@ Set the raw base once; every kubectl/helm step applies straight from this repo:
 ```bash
 # GitHub:
 export RAW=https://raw.githubusercontent.com/<ORG>/<REPO>/main
-# GitLab:
-https://code.aws.dev/personal_projects/alias_i/iamramya/eks-descheduler-drift-demo
 ```
 
 For a private
@@ -118,6 +116,7 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 helm repo update
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
+  --version 90.0.0 \
   --values "$RAW/monitoring/kube-prometheus-stack-values.yaml"
 kubectl apply -f "$RAW/monitoring/pod-distribution-dashboard.yaml"
 kubectl apply -f "$RAW/monitoring/recording-rule-per-az.yaml"
@@ -134,6 +133,7 @@ helm repo add descheduler https://kubernetes-sigs.github.io/descheduler/
 helm repo update
 helm install descheduler descheduler/descheduler \
   --namespace kube-system \
+  --version 0.36.0 \
   --values "$RAW/descheduler/descheduler-values.yaml"
 kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":true}}'
 kubectl -n kube-system create job descheduler-now --from=cronjob/descheduler
