@@ -108,11 +108,10 @@ Set the raw base once; every kubectl/helm step applies straight from this repo:
 
 ```bash
 # GitHub:
-export RAW=https://raw.githubusercontent.com/<ORG>/<REPO>/main
+export RAW=https://raw.githubusercontent.com/aws-samples/sample-eks-descheduler-drift-demo/main
 ```
 
-For a private
-> repo, clone it and apply from the local paths instead.
+For a private repo, clone it and apply from the local paths instead.
 
 ## Quick start
 
