@@ -32,3 +32,52 @@ spec:
             max by (namespace, created_by_name) (pod:count_by_zone:sum)
             -
             min by (namespace, created_by_name) (pod:count_by_zone:sum)
+
+        # ---- Per-Deployment (workload) view --------------------------------
+        # created_by_name is the ReplicaSet name (web-frontend-7d9f8b6c4), so it
+        # changes on every rollout and splits one workload across several series.
+        # Strip the trailing hash to get a stable Deployment-level label, and sum
+        # so a rollout in progress still reports one row per workload.
+        #
+        # WHY THIS MATTERS: topologySpreadConstraints are enforced PER workload
+        # (each has labelSelector app: <name>). Fleet-level skew is the sum of
+        # three independently-balanced workloads, so it can exceed maxSkew while
+        # every workload is compliant — 17/16/17 + 10/10/10 + 7/6/7 = 34/32/34,
+        # a fleet skew of 2 with nothing violating a thing. Compare THESE series
+        # against maxSkew, not the fleet total.
+        - record: workload:count_by_zone:sum
+          expr: |
+            sum by (namespace, workload, label_topology_kubernetes_io_zone) (
+              label_replace(
+                pod:count_by_zone:sum,
+                "workload", "$1", "created_by_name", "^(.*)-[^-]+$"
+              )
+            )
+        # Total replicas per workload (the Total column in the table panel).
+        - record: workload:count:sum
+          expr: |
+            sum by (namespace, workload) (workload:count_by_zone:sum)
+        # Observed skew per Deployment. THIS is what maxSkew governs.
+        #
+        # CAREFUL: a zone with zero pods produces NO series, not a series with
+        # value 0. A naive max-min then takes the min over only the zones that
+        # still have pods, and reports skew 0 during MAXIMUM drift — the fleet
+        # fully evacuated from one AZ looks perfectly balanced.
+        #
+        # Fix: multiply min by 1 only when the workload has a series in every
+        # zone that has nodes; otherwise multiply by 0, so min becomes 0 and
+        # skew correctly equals max. Verified against kubectl: with a workload
+        # at 1/0/1 this reports 1, where the naive form reported 0.
+        - record: workload:zone_skew:max_minus_min
+          expr: |
+            max by (namespace, workload) (workload:count_by_zone:sum)
+            -
+            (
+              min by (namespace, workload) (workload:count_by_zone:sum)
+              * on (namespace, workload)
+              (
+                count by (namespace, workload) (workload:count_by_zone:sum)
+                == bool
+                scalar(count(count by (label_topology_kubernetes_io_zone) (kube_node_labels)))
+              )
+            )

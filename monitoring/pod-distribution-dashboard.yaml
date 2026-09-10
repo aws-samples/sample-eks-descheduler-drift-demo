@@ -47,15 +47,25 @@ metadata:
 data:
   pod-distribution-detailed.json: |
     {
-      "annotations": { "list": [] },
+      "annotations": {
+        "list": []
+      },
       "editable": true,
       "title": "Pod Distribution Drift (detailed)",
       "uid": "pod-distribution-drift-detail",
-      "tags": ["eks", "topology", "descheduler", "blog"],
+      "tags": [
+        "eks",
+        "topology",
+        "descheduler",
+        "blog"
+      ],
       "timezone": "",
       "schemaVersion": 39,
       "version": 1,
-      "time": { "from": "now-1h", "to": "now" },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
       "refresh": "30s",
       "templating": {
         "list": [
@@ -74,23 +84,53 @@ data:
           "type": "timeseries",
           "title": "Pods per Availability Zone (demo/web)",
           "description": "Raw per-AZ pod count. Three lines that fan apart under churn and converge once the descheduler runs. NOTE: a zone with zero pods drops out of the query result entirely -- there is no series to draw -- so a line that just ends means that zone is empty, not that data is missing. That is also why the skew panel understates skew when a zone empties out.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 16,
+            "x": 0,
+            "y": 0
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
               "unit": "short",
               "min": 0
             },
             "overrides": []
           },
-          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max", "mean"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "calcs": [
+                "last",
+                "max",
+                "mean"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "{{label_topology_kubernetes_io_zone}}",
-              "expr": "sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels)"
+              "expr": "(sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0)"
             }
           ]
         },
@@ -98,16 +138,55 @@ data:
           "id": 2,
           "type": "stat",
           "title": "Current per-AZ count",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
-          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "colorMode": "value", "textMode": "value_and_name", "graphMode": "area" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "last"
+              ]
+            },
+            "orientation": "horizontal",
+            "colorMode": "value",
+            "textMode": "value_and_name",
+            "graphMode": "area"
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "{{label_topology_kubernetes_io_zone}}",
-              "expr": "sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels)"
+              "expr": "(sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0)"
             }
           ]
         },
@@ -116,24 +195,56 @@ data:
           "type": "timeseries",
           "title": "Per-AZ share of replicas (%)",
           "description": "Scale-invariant view of the same data. Perfectly balanced = three flat lines at 33.3%. Because it is normalized, HPA scaling does not move these lines -- only DRIFT does. This is usually the clearest single drift visual.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 9
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "stacking": { "mode": "normal", "group": "A" }, "showPoints": "never" },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 25,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "showPoints": "never"
+              },
               "unit": "percent",
               "min": 0,
               "max": 100
             },
             "overrides": []
           },
-          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "calcs": [
+                "last"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "{{label_topology_kubernetes_io_zone}}",
-              "expr": "100 * (sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels)) / scalar(sum(kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels))"
+              "expr": "100 * (sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0) / scalar(sum(kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels))"
             }
           ]
         },
@@ -142,37 +253,105 @@ data:
           "type": "timeseries",
           "title": "Observed skew vs configured maxSkew",
           "description": "The drift signal plotted against what the spec actually asks for. The distance between the two lines is the whole problem the post describes. The query ORs in 'count by (zone) (kube_node_labels) * 0' so that a zone holding ZERO pods still contributes a 0 to min(). Without it, an emptied zone produces no series, min() only spans zones that still have pods, and skew reads 0 at the exact moment it is worst -- which is what happened for three hours in the 100-pod run.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 9
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "showPoints": "never" },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 15,
+                "showPoints": "never"
+              },
               "unit": "short",
               "min": 0,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "orange", "value": 10 }, { "color": "red", "value": 50 } ] }
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 2
+                  },
+                  {
+                    "color": "orange",
+                    "value": 10
+                  },
+                  {
+                    "color": "red",
+                    "value": 50
+                  }
+                ]
+              }
             },
             "overrides": [
               {
-                "matcher": { "id": "byName", "options": "configured maxSkew (1)" },
+                "matcher": {
+                  "id": "byName",
+                  "options": "configured maxSkew (1)"
+                },
                 "properties": [
-                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-                  { "id": "custom.fillOpacity", "value": 0 },
-                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "text"
+                    }
+                  }
                 ]
               }
             ]
           },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "observed skew",
               "expr": "max(sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0) - min(sum by (label_topology_kubernetes_io_zone) (kube_pod_info{namespace=\"demo\", created_by_name=~\"web-.*\"} * on (node) group_left(label_topology_kubernetes_io_zone) kube_node_labels) or count by (label_topology_kubernetes_io_zone) (kube_node_labels) * 0)"
             },
             {
               "refId": "B",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "configured maxSkew (1)",
               "expr": "vector(1)"
             }
@@ -183,38 +362,86 @@ data:
           "type": "timeseries",
           "title": "HPA activity: what causes the drift",
           "description": "Every scale-up places new pods against whatever the capacity picture looks like that minute, and every scale-down removes them unevenly. This panel is the mechanism; the skew panel is the consequence.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 17
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 5,
+                "showPoints": "never"
+              },
               "unit": "short",
               "min": 0
             },
             "overrides": [
               {
-                "matcher": { "id": "byName", "options": "HPA desired" },
-                "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 6] } } ]
+                "matcher": {
+                  "id": "byName",
+                  "options": "HPA desired"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  }
+                ]
               }
             ]
           },
-          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "calcs": [
+                "last",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "HPA desired",
               "expr": "sum(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo\", horizontalpodautoscaler=~\"web-.*\"})"
             },
             {
               "refId": "B",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "ready",
               "expr": "sum(kube_deployment_status_replicas_ready{namespace=\"demo\", deployment=~\"web-.*\"})"
             },
             {
               "refId": "C",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "load generators",
               "expr": "kube_deployment_status_replicas_ready{namespace=\"demo\", deployment=\"load-generator\"}"
             }
@@ -225,23 +452,58 @@ data:
           "type": "timeseries",
           "title": "Pending pods (unschedulable)",
           "description": "Two DIFFERENT things show up here, and the post must not conflate them. (1) CAPACITY PRESSURE: while an AZ is unavailable, the HPA can ask for more replicas than the remaining AZs can hold, and the surplus queues. That is a real shortfall -- there is no room anywhere -- not a constraint problem, and it resolves the moment capacity returns. (2) EVICTION SAFETY: during descheduler runs this must stay flat at 0, because a PDB-throttled eviction of a soft-constraint workload should never strand a pod. Claim (2) is what the post can prove; do not claim (1).",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 17 },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 12,
+            "y": 17
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 30, "showPoints": "never" },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 30,
+                "showPoints": "never"
+              },
               "unit": "short",
               "min": 0,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] },
-              "color": { "mode": "thresholds" }
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
             },
             "overrides": []
           },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "Pending",
               "expr": "sum(kube_pod_status_phase{namespace=\"demo\", phase=\"Pending\"})"
             }
@@ -252,33 +514,63 @@ data:
           "type": "timeseries",
           "title": "PDB headroom (the throttle)",
           "description": "Each web Deployment has its own PDB (maxUnavailable: 10%). 'disruptions allowed' is how many pods the descheduler may evict from that workload right now. Watch it dip toward 0 during a run and recover as replacements go Ready.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 17 },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 17
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
               "unit": "short",
               "min": 0
             },
             "overrides": []
           },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "allowed {{poddisruptionbudget}}",
               "expr": "kube_poddisruptionbudget_status_pod_disruptions_allowed{namespace=\"demo\"}"
             },
             {
               "refId": "B",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "healthy {{poddisruptionbudget}}",
               "expr": "kube_poddisruptionbudget_status_current_healthy{namespace=\"demo\"}"
             },
             {
               "refId": "C",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "desired healthy",
               "expr": "kube_poddisruptionbudget_status_desired_healthy{namespace=\"demo\"}"
             }
@@ -289,14 +581,44 @@ data:
           "type": "stat",
           "title": "Descheduler runs (last 6h)",
           "description": "Counts completed descheduler Jobs. NOTE: this dashboard deliberately does NOT chart descheduler_pods_evicted_total. In CronJob mode the descheduler pod lives a few seconds -- less than one scrape interval -- so that counter is never collected and any panel built on it reads 0 forever, which reads as 'the descheduler did nothing'. Authoritative eviction counts come from the Job logs (kubectl -n kube-system logs job/<name> | grep totalEvicted) and from API events (reason=RemovePodsViolatingTopologySpreadConstraint); scripts/snapshot.sh captures both. For live eviction metrics, run the descheduler as a Deployment instead -- see descheduler/descheduler-values-deployment.yaml.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 7, "w": 6, "x": 0, "y": 25 },
-          "fieldConfig": { "defaults": { "unit": "short", "noValue": "0", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "textMode": "value", "graphMode": "area" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 0,
+            "y": 25
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "value",
+            "textMode": "value",
+            "graphMode": "area"
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "completed runs",
               "expr": "count(max_over_time(kube_job_status_succeeded{namespace=\"kube-system\", job_name=~\"descheduler.*\"}[6h]) > 0)"
             }
@@ -307,14 +629,42 @@ data:
           "type": "timeseries",
           "title": "Pod replacements in demo/web (churn proxy)",
           "description": "Pods in the web fleet whose creation timestamp is under 5 minutes old. Bars rise whenever pods are replaced -- by a descheduler eviction, an HPA scale-up, or a node going away -- so read it alongside the HPA panel to tell those apart: bars with flat HPA desired means rebalancing, bars with rising HPA desired means scaling. This is a proxy, not an eviction count; use the Job logs for exact numbers.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 7, "w": 10, "x": 6, "y": 25 },
-          "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 70 }, "unit": "short", "min": 0, "noValue": "0" }, "overrides": [] },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 10,
+            "x": 6,
+            "y": 25
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 1,
+                "fillOpacity": 70
+              },
+              "unit": "short",
+              "min": 0,
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "pods created in last 5m",
               "expr": "count(time() - kube_pod_created{namespace=\"demo\", pod=~\"web-.*\"} < 300)"
             }
@@ -325,18 +675,311 @@ data:
           "type": "stat",
           "title": "Nodes per AZ (all nodegroups)",
           "description": "Capacity symmetry check. If the AZs do not have comparable node capacity, apparent 'drift' may just be where the room is -- worth ruling out before blaming the scheduler.",
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 25 },
-          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "colorMode": "value", "textMode": "value_and_name" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 25
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "purple"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "orientation": "horizontal",
+            "colorMode": "value",
+            "textMode": "value_and_name"
+          },
           "targets": [
             {
               "refId": "A",
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
               "legendFormat": "{{label_topology_kubernetes_io_zone}}",
               "expr": "count by (label_topology_kubernetes_io_zone) (kube_node_labels)"
             }
           ]
+        },
+        {
+          "id": 11,
+          "type": "table",
+          "title": "Per-workload distribution and skew (constraint: maxSkew 1)",
+          "description": "Per-Deployment view: the spread constraints are enforced PER workload (labelSelector app: <name>), so this is the table to judge compliance from. Skew <= 1 means the workload satisfies its constraint. Note that 50 and 20 replicas do not divide evenly by 3, so skew 1 is the BEST achievable for web-frontend and web-orders. Fleet-level skew (the other panels) is the sum of three independently-balanced workloads and can legitimately reach 3 with nothing violating its constraint.",
+          "gridPos": {
+            "h": 10,
+            "w": 14,
+            "x": 0,
+            "y": 32
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "workload:count_by_zone:sum{namespace=\"demo\", workload=~\"web-.*\"}\nor\nlabel_replace(workload:count:sum{namespace=\"demo\", workload=~\"web-.*\"}, \"label_topology_kubernetes_io_zone\", \"Total\", \"\", \"\")\nor\nlabel_replace(workload:zone_skew:max_minus_min{namespace=\"demo\", workload=~\"web-.*\"}, \"label_topology_kubernetes_io_zone\", \"Skew\", \"\", \"\")",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "legendFormat": ""
+            }
+          ],
+          "transformations": [
+            {
+              "id": "groupingToMatrix",
+              "options": {
+                "columnField": "label_topology_kubernetes_io_zone",
+                "rowField": "workload",
+                "valueField": "Value",
+                "emptyValue": "zero"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {},
+                "includeByName": {},
+                "renameByName": {
+                  "workload\\label_topology_kubernetes_io_zone": "Workload",
+                  "workload": "Workload"
+                },
+                "indexByName": {
+                  "Workload": 0,
+                  "Total": 90,
+                  "Skew": 91
+                }
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "center",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Workload"
+                },
+                "properties": [
+                  {
+                    "id": "custom.align",
+                    "value": "left"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 170
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Skew"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background",
+                      "mode": "basic"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "red",
+                          "value": 2
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 90
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 90
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "showHeader": true,
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false
+            },
+            "cellHeight": "sm",
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Skew"
+              }
+            ]
+          }
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "Per-workload skew vs configured maxSkew",
+          "description": "The apples-to-apples comparison: each Deployment's observed skew against the maxSkew: 1 its own spec asks for. A workload above the dashed line is genuinely violating its constraint. Use this rather than fleet skew to claim convergence.",
+          "gridPos": {
+            "h": 10,
+            "w": 10,
+            "x": 14,
+            "y": 32
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "workload:zone_skew:max_minus_min{namespace=\"demo\", workload=~\"web-.*\"}",
+              "legendFormat": "{{workload}}",
+              "range": true,
+              "instant": false
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "vector(1)",
+              "legendFormat": "configured maxSkew (1)",
+              "range": true,
+              "instant": false
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisSoftMin": 0,
+                "axisSoftMax": 3
+              },
+              "unit": "short",
+              "decimals": 0
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "configured maxSkew (1)"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "text"
+                    }
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          }
         }
       ]
     }

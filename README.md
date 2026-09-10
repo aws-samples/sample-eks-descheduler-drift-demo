@@ -37,11 +37,28 @@ The experiment runs at two scales with the same manifests:
   be in different AZs** — check before you start:
 
   ```bash
-  aws ec2 describe-subnets \
-    --subnet-ids $(aws eks describe-cluster --name "$CLUSTER" \
-      --query 'cluster.resourcesVpcConfig.subnetIds' --output text) \
-    --query 'Subnets[].[SubnetId,AvailabilityZone]' --output table
+  # Set both once; every later step in this README reuses them.
+  export CLUSTER=<cluster-name>
+  export AWS_REGION=us-east-1        # your cluster's Region
+
+  # Confirm the cluster name resolves (lists the clusters in this Region):
+  aws eks list-clusters --region "$AWS_REGION" --output table
+
+  # The && and ${SUBNET_IDS:?} guard matters: on a failed lookup, an empty
+  # --subnet-ids makes describe-subnets list EVERY subnet in the account, which
+  # looks like a valid answer but is not your cluster's subnets.
+  SUBNET_IDS=$(aws eks describe-cluster --name "$CLUSTER" --region "$AWS_REGION" \
+    --query 'cluster.resourcesVpcConfig.subnetIds' --output text) &&
+  aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids ${SUBNET_IDS:?} \
+    --query 'sort_by(Subnets,&AvailabilityZone)[].[SubnetId,AvailabilityZone]' \
+    --output table
   ```
+
+  Check that **three distinct AZs** appear in the output. If you see fewer (for
+  example, two subnets in the same AZ), add a subnet in a third AZ to the
+  cluster's VPC before you continue — the topology spread constraints and the
+  AZ-unavailability window both assume three zones, so the drift the demo
+  reproduces cannot occur with two.
 
   If they differ, override the AZ names in two places: export `AZ_A`/`AZ_B`/`AZ_C`
   in the shell that runs `scripts/watch-distribution.sh` (otherwise it logs zeros
@@ -105,7 +122,8 @@ For a private
 #    and node-role lookups, and verification gates: cluster/README.md)
 kubectl set env daemonset aws-node -n kube-system \
   ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
-aws eks create-nodegroup --cluster-name <cluster> --nodegroup-name ng-drift-1000 \
+aws eks create-nodegroup --cluster-name "$CLUSTER" --region "$AWS_REGION" \
+  --nodegroup-name ng-drift-100 \
   --scaling-config minSize=21,maxSize=24,desiredSize=21 \
   --instance-types m5.2xlarge --disk-size 30 \
   --subnets <subnet-1a> <subnet-1b> <subnet-1c> \
@@ -127,17 +145,42 @@ kubectl apply -f "$RAW/workload/web-app.yaml"
 kubectl apply -f "$RAW/workload/hpa-1000.yaml"             # or hpa-100.yaml
 kubectl apply -f "$RAW/workload/load-generator.yaml"
 
-# 4. Descheduler — suspend the CronJob before any manual run, or a scheduled
-#    run can fire seconds later and double-count the correction
+# 4. Simulate the node-availability gap in the third AZ.
+#    drain cordons the nodes AND evicts their pods in one action, honouring
+#    PDBs as it goes — closer to real instance loss than deleting pods by hand.
+kubectl drain -l topology.kubernetes.io/zone=us-east-1c \
+  --ignore-daemonsets --delete-emptydir-data --timeout=10m
+
+# Grafana now shows the third zone empty and skew well above maxSkew:1.
+# Return the capacity — the nodes are healthy again:
+kubectl uncordon -l topology.kubernetes.io/zone=us-east-1c
+
+# CONTROL EXPERIMENT: wait 5-10 minutes. Nothing moves back. Kubernetes does
+# not relocate running pods to satisfy a soft (ScheduleAnyway) constraint.
+# This is the drift the descheduler exists to correct.
+
+# 5. Descheduler — install SUSPENDED. The CronJob's 2-minute schedule would
+#    otherwise start correcting drift immediately, which destroys the control
+#    experiment (proving drift does NOT self-heal) and double-counts any
+#    manual pass that a scheduled run overlaps.
 helm repo add descheduler https://kubernetes-sigs.github.io/descheduler/
 helm repo update
 helm install descheduler descheduler/descheduler \
   --namespace kube-system \
   --version 0.36.0 \
-  --values "$RAW/descheduler/descheduler-values.yaml"
-kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":true}}'
-kubectl -n kube-system create job descheduler-now --from=cronjob/descheduler
-kubectl -n kube-system logs -f job/descheduler-now
+  --values "$RAW/descheduler/descheduler-values.yaml" \
+  --set suspend=true
+
+# Trigger one pass at a time (timestamped: a fixed name collides on re-run)
+kubectl -n kube-system create job descheduler-$(date +%H%M%S) --from=cronjob/descheduler
+kubectl -n kube-system logs \
+  $(kubectl -n kube-system get jobs --sort-by=.metadata.creationTimestamp -o name \
+    | grep desched | tail -1) \
+  | grep -E "totalEvicted|violate the pod's disruption budget" | tail -5
+
+# PDBs cap evictions per pass, so repeat until the per-workload skew reaches
+# maxSkew. Then hand control back to the schedule for the steady-state finish:
+kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":false}}'
 ```
 
 The full experiment sequence — the unavailability window, the control
@@ -152,14 +195,37 @@ post. To induce and close the window:
 ## Cleanup
 
 ```bash
+# 1. Stop the workload first
 kubectl delete namespace demo
+
+# 2. Remove the tooling
 helm uninstall descheduler -n kube-system
 helm uninstall monitoring -n monitoring
-aws eks delete-nodegroup --cluster-name <cluster> --nodegroup-name ng-drift-1000
+kubectl delete namespace monitoring        # helm leaves the namespace and PVCs
+
+# 3. Remove the nodes (the dominant cost)
+aws eks delete-nodegroup --cluster-name "$CLUSTER" --region "$AWS_REGION" \
+  --nodegroup-name ng-drift-1000
+aws eks wait nodegroup-deleted --cluster-name "$CLUSTER" --region "$AWS_REGION" \
+  --nodegroup-name ng-drift-1000
 ```
 
-Your cluster is untouched beyond the removed node group (prefix delegation on
-the VPC CNI remains enabled; disable it if your cluster did not use it before).
+If the cluster was created solely for this demo, delete it once the node group
+is gone (`delete-cluster` fails while a node group is still attached):
+
+```bash
+aws eks delete-cluster --name "$CLUSTER" --region "$AWS_REGION"
+```
+
+Otherwise your cluster is untouched beyond the removed node group. Three things
+outlive the commands above and keep billing:
+
+- **NAT gateway**, if you created one for the node subnets — it survives cluster
+  deletion and bills hourly plus data processing.
+- **kube-prometheus-stack CRDs**, which `helm uninstall` deliberately leaves in
+  place: `kubectl delete crd -l app.kubernetes.io/part-of=kube-prometheus-stack`
+- **Prefix delegation** on the VPC CNI, still enabled; disable it if your
+  cluster did not use it before.
 
 ## Security notes
 

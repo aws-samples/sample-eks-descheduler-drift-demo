@@ -4,24 +4,32 @@
 #   helm repo add descheduler https://kubernetes-sigs.github.io/descheduler/
 #   helm repo update
 #   helm install descheduler descheduler/descheduler \
-#     --namespace kube-system --values descheduler/descheduler-values.yaml
+#     --namespace kube-system --version 0.36.0 \
+#     --values descheduler/descheduler-values.yaml
 #
 # CronJob mode is what enables on-demand runs:
-#   kubectl -n kube-system create job descheduler-now --from=cronjob/descheduler
+#   kubectl -n kube-system create job descheduler-$(date +%H%M%S) --from=cronjob/descheduler
 #
 # NOTE for clean measurements: the 2-minute schedule is demo-only (use */15 in
-# production). If you trigger a manual job, SUSPEND the CronJob first —
-#   kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":true}}'
-# — otherwise a scheduled run can fire seconds after your manual one, both
-# computing evictions from the same snapshot and inflating the eviction count.
-# (This is exactly what produced 404 evictions for a ~276-move correction in the
-# original run.)
+# production). To measure a single pass, install SUSPENDED so no scheduled run
+# can fire between install and your manual job:
+#   helm install ... --set suspend=true
+# Then trigger passes by hand, and unsuspend at the end to show steady state:
+#   kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":false}}'
+# If a scheduled run overlaps a manual one, both compute evictions from the same
+# snapshot and the eviction count is inflated. (This is exactly what produced 404
+# evictions for a ~276-move correction in the original run.)
 #
 # The Helm chart sets priorityClassName: system-cluster-critical (priority
 # 2,000,000,000) on the descheduler pod by default, so the pod schedules even
 # while cluster capacity is tight.
 kind: CronJob
 schedule: "*/2 * * * *"            # demo only; use */15 in production
+# Shipped unsuspended: this file describes a descheduler that actually runs.
+# For the demo, install with --set suspend=true so the schedule cannot correct
+# drift before you have captured it, then unsuspend to finish on the schedule:
+#   kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":false}}'
+suspend: false
 successfulJobsHistoryLimit: 3
 failedJobsHistoryLimit: 3
 
