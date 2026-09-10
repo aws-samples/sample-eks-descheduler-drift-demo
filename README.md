@@ -174,7 +174,14 @@ Confirm the fleet is up and evenly spread before inducing drift:
 ```bash
 kubectl -n demo get hpa
 kubectl -n demo get pods -o wide | wc -l
-./scripts/watch-distribution.sh          # Ctrl-C to stop
+```
+
+Start the distribution logger **in a spare terminal and leave it running for the
+rest of the session** — it appends a per-AZ CSV row every 30s and is the source
+of every before/after number:
+
+```bash
+./scripts/watch-distribution.sh captures/distribution.csv 30
 ```
 
 ### Step 4 — Induce the AZ-unavailability window
@@ -196,12 +203,14 @@ capacity — the nodes are healthy again:
 
 ### Step 5 — Control experiment
 
-Wait 5–10 minutes and watch the distribution. **Nothing moves back.** Kubernetes
-does not relocate running pods to satisfy a soft (`ScheduleAnyway`) topology
-spread constraint. This is the drift the descheduler exists to correct.
+Wait 5–10 minutes. **Nothing moves back.** Kubernetes does not relocate running
+pods to satisfy a soft (`ScheduleAnyway`) topology spread constraint. This is the
+drift the descheduler exists to correct.
+
+Watch the logger from Step 3 — the skew column stays flat:
 
 ```bash
-./scripts/watch-distribution.sh          # Ctrl-C to stop
+tail -f captures/distribution.csv
 ```
 
 ### Step 6 — Install the descheduler (suspended)
