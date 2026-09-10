@@ -37,26 +37,37 @@ The experiment runs at two scales with the same manifests:
 
 The repo defaults to `us-east-1a/b/c`. **Check that your cluster spans three distinct AZs** — the topology spread constraints and the AZ-unavailability window both require three zones.
 
+Set these two variables once — every later step in this README reuses them:
+
 ```bash
-# Set once; every later step in this README reuses these two variables.
 export CLUSTER=<cluster-name>
 export AWS_REGION=us-east-1        # your cluster's Region
+```
 
-# Confirm the cluster resolves.
+Confirm the cluster name resolves:
+
+```bash
 aws eks list-clusters --region "$AWS_REGION" --output table
+```
 
-# Look up the cluster's subnets and confirm three distinct AZs appear.
-# The ${SUBNET_IDS:?} guard prevents describe-subnets from listing every
-# subnet in the account if the lookup returns empty.
+Look up the cluster's subnets and confirm **three distinct AZs** appear. The
+`${SUBNET_IDS:?}` guard prevents `describe-subnets` from listing every subnet in
+the account if the lookup returns empty:
+
+```bash
 SUBNET_IDS=$(aws eks describe-cluster --name "$CLUSTER" --region "$AWS_REGION" \
   --query 'cluster.resourcesVpcConfig.subnetIds' --output text) &&
 aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids ${SUBNET_IDS:?} \
   --query 'sort_by(Subnets,&AvailabilityZone)[].[SubnetId,AvailabilityZone]' \
   --output table
+```
 
-# Verify metrics-server is running and serving data.
+Verify `metrics-server` is running and serving data — `kubectl top nodes` must
+return numbers, not an error:
+
+```bash
 kubectl -n kube-system get deploy metrics-server
-kubectl top nodes   # must return numbers, not an error
+kubectl top nodes
 ```
 
 If your AZs differ from `us-east-1a/b/c`, override them in two places: export
@@ -95,68 +106,147 @@ straight from this repo. For a private repo, clone it and use local paths instea
 
 ```bash
 export RAW=https://raw.githubusercontent.com/aws-samples/sample-eks-descheduler-drift-demo/main
+```
 
-# 1. Capacity — enable prefix delegation first, then create the node group.
-#    Full subnet/node-role lookup steps: cluster/README.md
+### Step 1 — Create the node group
+
+Enable prefix delegation **first**, then create the node group. Replace the
+subnet IDs and node role ARN with your own (lookup steps: `cluster/README.md`).
+
+```bash
 kubectl set env daemonset aws-node -n kube-system \
   ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
+```
+
+```bash
 aws eks create-nodegroup --cluster-name "$CLUSTER" --region "$AWS_REGION" \
   --nodegroup-name ng-drift-1000 \
   --scaling-config minSize=21,maxSize=24,desiredSize=21 \
   --instance-types m5.2xlarge --disk-size 30 \
   --subnets <subnet-1a> <subnet-1b> <subnet-1c> \
   --node-role <NODE_ROLE_ARN> --labels role=drift-demo
+```
 
-# 2. Monitoring
+Wait for the nodes to join:
+
+```bash
+aws eks wait nodegroup-active --cluster-name "$CLUSTER" --region "$AWS_REGION" \
+  --nodegroup-name ng-drift-1000
+kubectl get nodes -l role=drift-demo
+```
+
+### Step 2 — Install monitoring
+
+```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
+```
+
+```bash
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
   --version 90.0.0 \
   --values "$RAW/monitoring/kube-prometheus-stack-values.yaml"
+```
+
+```bash
 kubectl apply -f "$RAW/monitoring/pod-distribution-dashboard.yaml"
 kubectl apply -f "$RAW/monitoring/recording-rule-per-az.yaml"
+```
 
-# 3. Workload fleet
+Open Grafana (port-forward only — see Security notes):
+
+```bash
+kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80
+```
+
+### Step 3 — Deploy the workload fleet
+
+```bash
 kubectl apply -f "$RAW/workload/namespace.yaml"
 kubectl apply -f "$RAW/workload/web-app.yaml"
 kubectl apply -f "$RAW/workload/hpa-1000.yaml"   # or hpa-100.yaml for small-scale
 kubectl apply -f "$RAW/workload/load-generator.yaml"
+```
 
-# 4. Induce the AZ-unavailability window (use YOUR third AZ name).
-#    drain cordons the nodes AND evicts pods in one step, honouring PDBs —
-#    closer to real instance loss than deleting pods by hand.
+Confirm the fleet is up and evenly spread before inducing drift:
+
+```bash
+kubectl -n demo get hpa
+kubectl -n demo get pods -o wide | wc -l
+./scripts/watch-distribution.sh          # Ctrl-C to stop
+```
+
+### Step 4 — Induce the AZ-unavailability window
+
+Use **your** third AZ name. `induce-window.sh open` cordons the nodes and evicts
+their pods in one action, honouring PDBs — closer to real instance loss than
+deleting pods by hand.
+
+```bash
 ./scripts/induce-window.sh open us-east-1c
+```
 
-# Grafana now shows the third zone empty and skew above maxSkew:1.
-# Return the capacity:
+Grafana now shows the third zone empty and skew above `maxSkew: 1`. Return the
+capacity — the nodes are healthy again:
+
+```bash
 ./scripts/induce-window.sh close us-east-1c
+```
 
-# 5. Control experiment — wait 5-10 minutes and observe.
-#    Kubernetes does NOT relocate running pods to satisfy a soft (ScheduleAnyway)
-#    topology spread constraint. This is the drift the descheduler exists to fix.
+### Step 5 — Control experiment
 
-# 6. Descheduler — install SUSPENDED so it does not interfere with the control
-#    experiment above.
+Wait 5–10 minutes and watch the distribution. **Nothing moves back.** Kubernetes
+does not relocate running pods to satisfy a soft (`ScheduleAnyway`) topology
+spread constraint. This is the drift the descheduler exists to correct.
+
+```bash
+./scripts/watch-distribution.sh          # Ctrl-C to stop
+```
+
+### Step 6 — Install the descheduler (suspended)
+
+Install **suspended** so the 2-minute CronJob schedule does not start correcting
+drift before you have observed it.
+
+```bash
 helm repo add descheduler https://kubernetes-sigs.github.io/descheduler/
 helm repo update
+```
+
+```bash
 helm install descheduler descheduler/descheduler \
   --namespace kube-system \
   --version 0.36.0 \
   --values "$RAW/descheduler/descheduler-values.yaml" \
   --set suspend=true
+```
 
-# Trigger one manual pass (timestamped name avoids collision on re-run).
+### Step 7 — Trigger one descheduler pass
+
+The timestamped job name avoids a collision on re-run.
+
+```bash
 kubectl -n kube-system create job descheduler-$(date +%H%M%S) --from=cronjob/descheduler
+```
 
-# Check eviction output from the latest job.
+Check what it evicted:
+
+```bash
 kubectl -n kube-system logs \
   $(kubectl -n kube-system get jobs --sort-by=.metadata.creationTimestamp -o name \
     | grep desched | tail -1) \
   | grep -E "totalEvicted|violate the pod's disruption budget" | tail -5
+```
 
-# PDBs cap evictions per pass — repeat the job until per-workload skew reaches
-# maxSkew. Then resume the schedule for steady-state operation:
+PDBs cap evictions per pass, so **repeat this step** until per-workload skew
+reaches `maxSkew`.
+
+### Step 8 — Resume the schedule
+
+Hand control back to the CronJob for the steady-state finish:
+
+```bash
 kubectl -n kube-system patch cronjob descheduler -p '{"spec":{"suspend":false}}'
 ```
 
@@ -165,25 +255,44 @@ convergence, and what to capture at each phase — is in the blog post.
 
 ## Cleanup
 
-```bash
-# 1. Stop the workload
-kubectl delete namespace demo
+### Step 1 — Stop the workload
 
-# 2. Remove the tooling
+```bash
+kubectl delete namespace demo
+```
+
+### Step 2 — Remove the tooling
+
+```bash
 helm uninstall descheduler -n kube-system
 helm uninstall monitoring -n monitoring
 kubectl delete namespace monitoring   # helm leaves the namespace and PVCs
+```
 
-# 3. Remove the node group (dominant cost)
+### Step 3 — Remove the node group
+
+This is the dominant cost — do it promptly.
+
+```bash
 aws eks delete-nodegroup --cluster-name "$CLUSTER" --region "$AWS_REGION" \
   --nodegroup-name ng-drift-1000
+```
+
+```bash
 aws eks wait nodegroup-deleted --cluster-name "$CLUSTER" --region "$AWS_REGION" \
   --nodegroup-name ng-drift-1000
+```
 
-# 4. If the cluster was created solely for this demo, delete it too.
-#    (delete-cluster fails while a node group is still attached — wait for step 3 first.)
+### Step 4 — Delete the cluster (optional)
+
+Only if the cluster was created solely for this demo. `delete-cluster` fails
+while a node group is still attached, so complete Step 3 first.
+
+```bash
 aws eks delete-cluster --name "$CLUSTER" --region "$AWS_REGION"
 ```
+
+### Step 5 — Check for leftover billing
 
 Three things outlive the commands above and keep billing:
 
