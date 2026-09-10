@@ -123,7 +123,7 @@ For a private
 kubectl set env daemonset aws-node -n kube-system \
   ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
 aws eks create-nodegroup --cluster-name "$CLUSTER" --region "$AWS_REGION" \
-  --nodegroup-name ng-drift-100 \
+  --nodegroup-name ng-drift-1000 \
   --scaling-config minSize=21,maxSize=24,desiredSize=21 \
   --instance-types m5.2xlarge --disk-size 30 \
   --subnets <subnet-1a> <subnet-1b> <subnet-1c> \
